@@ -1,0 +1,11 @@
+mihomo-k8s gateway: http://{{ include "mihomo-k8s.gatewayHost" . }}:{{ .Values.gateway.port }} (HTTP and SOCKS5)
+
+Anything not on the allow list gets {{ .Values.defaultAction }}.
+{{- if .Values.controller.enabled }}
+
+Panel and API listen on 127.0.0.1 inside the pod. To open the panel:
+
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "mihomo-k8s.fullname" . }} {{ .Values.controller.port }}:{{ .Values.controller.port }}{{ if .Values.dashboard.enabled }} {{ .Values.dashboard.port }}:{{ .Values.dashboard.port }}
+
+then browse to http://127.0.0.1:{{ .Values.dashboard.port }}{{ end }}
+{{- end }}

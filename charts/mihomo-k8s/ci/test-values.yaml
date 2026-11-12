@@ -1,0 +1,35 @@
+# Used by lint and local tests only: a static "direct" node instead of a real
+# subscription, so nothing secret is needed.
+proxies:
+  - name: direct-test
+    type: direct
+providers:
+  demo:
+    type: http
+    url: "${SUBSCRIPTION_URL}"
+    interval: 3600
+    proxy: DIRECT
+    header:
+      User-Agent: ["clash.meta"]
+      X-HWID: ["${SUBSCRIPTION_HWID}"]
+group:
+  excludeFilter: "LTE|RU"
+allow:
+  domainSuffixes: [example.com]
+controller:
+  existingSecret:
+    name: mihomo-controller
+env:
+  - name: SUBSCRIPTION_URL
+    valueFrom:
+      secretKeyRef: {name: mihomo-subscription, key: url}
+  - name: SUBSCRIPTION_HWID
+    valueFrom:
+      secretKeyRef: {name: mihomo-subscription, key: hwid}
+probe:
+  webhook:
+    url: http://alert-sink.example.svc:8080/hook
+clientEnv:
+  namespaces: [bots, monitoring]
+transparentClient:
+  namespaces: [bots]

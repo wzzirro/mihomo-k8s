@@ -1,0 +1,212 @@
+{{- if and .Values.probe.enabled (not .Values.controller.enabled) }}
+{{- fail "mihomo-k8s: probe.enabled requires controller.enabled" }}
+{{- end }}
+{{- $fullname := include "mihomo-k8s.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mihomo-k8s.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "mihomo-k8s.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mihomo-k8s.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        kubectl.kubernetes.io/default-container: mihomo
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        # Substitutes ${VAR} placeholders so that secrets stay out of the ConfigMap.
+        - name: render-config
+          image: {{ include "mihomo-k8s.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              umask 077
+              awk -f /config-template/render-config.awk /config-template/config.yaml > /data/config.yaml
+          {{- with (include "mihomo-k8s.env" . | trim) }}
+          env:
+            {{- . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+              readOnly: true
+            - name: data
+              mountPath: /data
+      containers:
+        - name: mihomo
+          image: {{ include "mihomo-k8s.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-d", "/data", "-f", "/data/config.yaml"]
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.gateway.port }}
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+        {{- if .Values.probe.enabled }}
+        - name: probe
+          image: {{ include "mihomo-k8s.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "/config-template/probe.sh"]
+          env:
+            - name: CONTROLLER_PORT
+              value: {{ .Values.controller.port | quote }}
+            - name: PROBE_GROUP
+              value: {{ .Values.group.name | quote }}
+            - name: PROBE_TARGET
+              value: {{ .Values.probe.url | quote }}
+            - name: PROBE_TARGET_ENCODED
+              value: {{ .Values.probe.url | urlquery | quote }}
+            - name: PROBE_INTERVAL
+              value: {{ .Values.probe.interval | quote }}
+            - name: PROBE_TIMEOUT_MS
+              value: {{ .Values.probe.timeout | quote }}
+            - name: PROBE_FAILURE_THRESHOLD
+              value: {{ .Values.probe.failureThreshold | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.probe.webhook.existingSecret.name }}
+            - name: PROBE_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.probe.webhook.existingSecret.name }}
+                  key: {{ .Values.probe.webhook.existingSecret.key }}
+            {{- else if .Values.probe.webhook.url }}
+            - name: PROBE_WEBHOOK_URL
+              value: {{ .Values.probe.webhook.url | quote }}
+            {{- end }}
+            {{- if .Values.controller.existingSecret.name }}
+            - name: MIHOMO_CONTROLLER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controller.existingSecret.name }}
+                  key: {{ .Values.controller.existingSecret.key }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.probe.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+              readOnly: true
+        {{- end }}
+        {{- if and .Values.dashboard.enabled .Values.controller.enabled }}
+        - name: dashboard
+          image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          env:
+            - name: HOST
+              value: "127.0.0.1"
+            - name: NITRO_HOST
+              value: "127.0.0.1"
+            - name: PORT
+              value: {{ .Values.dashboard.port | quote }}
+            - name: DEFAULT_BACKEND_URL
+              value: "http://127.0.0.1:{{ .Values.controller.port }}"
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.dashboard.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: config-template
+          configMap:
+            name: {{ $fullname }}-config
+        - name: data
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        {{- if .Values.topologySpreadConstraints }}
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+        {{- else }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "mihomo-k8s.selectorLabels" . | nindent 14 }}
+        {{- end }}

@@ -1,0 +1,249 @@
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the full resource name prefix.
+fullnameOverride: ""
+
+# -- Cluster DNS domain, used to build the gateway address handed to clients.
+clusterDomain: cluster.local
+
+image:
+  repository: docker.io/metacubex/mihomo
+  # -- Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- Number of gateway replicas. Replicas do not share state, which is why the
+# chart only supports automatic proxy groups (no manual selection).
+replicaCount: 2
+
+gateway:
+  # -- Port of the mixed (HTTP + SOCKS5) inbound exposed through the Service.
+  port: 7890
+  logLevel: info
+
+# -- mihomo `proxy-providers`, passed through as is (subscriptions).
+# Values may contain `${VAR}` placeholders. They are replaced at pod start from
+# the container environment (see `env` / `envFrom`), so secrets such as the
+# subscription URL never end up in a ConfigMap.
+# `path` defaults to `./proxy-providers/<name>.yaml`.
+providers: {}
+#  main:
+#    type: http
+#    url: "${SUBSCRIPTION_URL}"
+#    interval: 3600
+#    proxy: DIRECT
+#    header:
+#      User-Agent: ["clash.meta"]
+#    health-check:
+#      enable: true
+#      url: https://www.gstatic.com/generate_204
+#      interval: 300
+
+# -- Static mihomo `proxies`, passed through as is. `${VAR}` placeholders work
+# here too.
+proxies: []
+
+# The single automatic proxy group all allowed traffic goes through.
+group:
+  name: auto
+  # -- `url-test` (fastest node) or `fallback` (first healthy node).
+  type: url-test
+  url: https://www.gstatic.com/generate_204
+  # -- Health-check interval, seconds.
+  interval: 120
+  # -- Health-check timeout, milliseconds.
+  timeout: 5000
+  # -- url-test only: switch nodes when the gain exceeds this, milliseconds.
+  tolerance: 50
+  # -- Regex: keep only provider nodes whose name matches.
+  filter: ""
+  # -- Regex: drop provider nodes whose name matches.
+  excludeFilter: ""
+
+# What goes out through the proxy group. Everything else gets `defaultAction`.
+allow:
+  # -- Allow Telegram (domains and datacenter subnets from `presets.telegram`).
+  telegram: true
+  # -- Exact domains.
+  domains: []
+  # -- Domain suffixes (the domain itself and all subdomains).
+  domainSuffixes: []
+  # -- IPv4 CIDRs.
+  ipCIDRs: []
+
+# -- Raw mihomo rules evaluated before the allow list, e.g.
+# `DOMAIN-KEYWORD,example,auto`.
+extraRules: []
+
+# -- Action for traffic that matched nothing.
+# `DIRECT`: the gateway connects to the destination itself, without a proxy, so
+# a workload with HTTPS_PROXY set keeps working for every other destination.
+# `REJECT`: the gateway refuses it; use this to keep the gateway from being a
+# general way out of the cluster.
+defaultAction: DIRECT
+
+presets:
+  telegram:
+    domainSuffixes:
+      - telegram.org
+      - t.me
+      - telegram.me
+      - telegra.ph
+      - tdesktop.com
+      - telesco.pe
+      - telegram-cdn.org
+      - cdn-telegram.org
+    ipCIDRs:
+      - 91.105.192.0/23
+      - 91.108.4.0/22
+      - 91.108.8.0/22
+      - 91.108.12.0/22
+      - 91.108.16.0/22
+      - 91.108.20.0/22
+      - 91.108.56.0/22
+      - 95.161.64.0/20
+      - 149.154.160.0/20
+      - 185.76.151.0/24
+
+# mihomo REST API. It listens on 127.0.0.1 inside the pod only, so it is
+# reachable through `kubectl port-forward` and by the pod's own sidecars, and by
+# nothing else in the cluster.
+controller:
+  enabled: true
+  port: 9090
+  # -- Existing Secret holding the API secret. Leave empty for no API secret.
+  existingSecret:
+    name: ""
+    key: secret
+
+# Web panel (metacubexd) as a sidecar. Also bound to 127.0.0.1; open it with
+# `kubectl port-forward` together with the controller port.
+dashboard:
+  enabled: true
+  image:
+    repository: ghcr.io/metacubex/metacubexd
+    tag: v1.274.6
+    pullPolicy: IfNotPresent
+  port: 8080
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# Reachability probe: periodically asks the core to reach `url` through the
+# proxy group and calls a webhook when it starts failing and when it recovers.
+# Requires `controller.enabled`.
+probe:
+  enabled: true
+  url: https://api.telegram.org
+  # -- Seconds between checks.
+  interval: 60
+  # -- Per-check timeout, milliseconds.
+  timeout: 10000
+  # -- Consecutive failures before the webhook fires.
+  failureThreshold: 3
+  webhook:
+    # -- URL that receives a JSON POST. Called directly, not through the gateway.
+    url: ""
+    # -- Take the URL from a Secret instead (wins over `url`).
+    existingSecret:
+      name: ""
+      key: url
+  resources:
+    requests:
+      cpu: 5m
+      memory: 8Mi
+    limits:
+      memory: 32Mi
+
+# -- Extra environment for the gateway containers; the source of `${VAR}`
+# placeholder values.
+env: []
+#  - name: SUBSCRIPTION_URL
+#    valueFrom:
+#      secretKeyRef:
+#        name: mihomo-subscription
+#        key: url
+envFrom: []
+
+# Explicit-proxy clients: a ConfigMap with HTTP(S)_PROXY / NO_PROXY, created in
+# every listed namespace, for workloads to consume with `envFrom`.
+clientEnv:
+  enabled: true
+  # -- Namespaces to create the ConfigMap in.
+  namespaces: []
+  # -- ConfigMap name; defaults to `<fullname>-proxy-env`.
+  name: ""
+  noProxy:
+    - localhost
+    - 127.0.0.1
+    - .svc
+    - .cluster.local
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  # -- Extra NO_PROXY entries.
+  extraNoProxy: []
+
+# Transparent clients, for workloads that cannot use a proxy (e.g. anything
+# speaking MTProto to hardcoded addresses). The chart creates a ConfigMap in
+# every listed namespace; the workload adds an init container and a sidecar
+# that mount it. See examples/transparent-client.yaml.
+transparentClient:
+  enabled: true
+  # -- Namespaces to create the ConfigMap in.
+  namespaces: []
+  # -- ConfigMap name; defaults to `<fullname>-transparent-client`.
+  name: ""
+  # -- Local redirect port of the sidecar.
+  port: 7892
+  # -- UID the sidecar runs as; its own traffic is excluded from redirection.
+  uid: 1337
+  # -- Destination IPv4 CIDRs to intercept. Defaults to the Telegram preset.
+  # They must also be allowed on the gateway (`allow.*`).
+  cidrs: []
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podDisruptionBudget:
+  # -- Created only when replicaCount > 1.
+  enabled: true
+  maxUnavailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# -- Defaults to a soft spread of replicas across nodes.
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 30

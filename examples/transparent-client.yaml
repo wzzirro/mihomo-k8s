@@ -1,0 +1,92 @@
+# Transparent client: add these two containers and two volumes to the pod
+# template of a workload that cannot be told to use a proxy.
+#
+# Prerequisite: the workload's namespace is listed in
+# `transparentClient.namespaces` of the mihomo-k8s release, which creates the
+# ConfigMap referenced below. The name here assumes a release called `egress`
+# (ConfigMap `egress-mihomo-k8s-transparent-client`).
+#
+# How it works: the init container adds iptables rules, inside the pod's own
+# network namespace, that redirect outgoing TCP connections to the configured
+# CIDRs into the sidecar; the sidecar forwards them to the gateway. If the
+# sidecar is down, those connections are refused - they never leave directly.
+#
+# Requires Kubernetes 1.29+ (native sidecars). Only IPv4 TCP is intercepted.
+# Not compatible with a service-mesh sidecar that installs its own redirect.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      initContainers:
+        - name: mihomo-redirect
+          image: docker.io/metacubex/mihomo:v1.19.34
+          command: ["/bin/sh", "/etc/mihomo-k8s/redirect.sh"]
+          envFrom:
+            - configMapRef:
+                name: egress-mihomo-k8s-transparent-client
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_ADMIN", "NET_RAW"]
+          volumeMounts:
+            - name: mihomo-k8s
+              mountPath: /etc/mihomo-k8s
+              readOnly: true
+            # iptables needs a writable lock directory
+            - name: mihomo-run
+              mountPath: /run
+        - name: mihomo-client
+          image: docker.io/metacubex/mihomo:v1.19.34
+          # Native sidecar: starts before the app and stays up for its lifetime.
+          restartPolicy: Always
+          args: ["-d", "/data", "-f", "/etc/mihomo-k8s/config.yaml"]
+          startupProbe:
+            tcpSocket:
+              port: 7892
+            periodSeconds: 1
+            failureThreshold: 30
+          securityContext:
+            # Must match `transparentClient.uid`; this user's traffic is not redirected.
+            runAsUser: 1337
+            runAsGroup: 1337
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: mihomo-k8s
+              mountPath: /etc/mihomo-k8s
+              readOnly: true
+            - name: mihomo-data
+              mountPath: /data
+      containers:
+        - name: app
+          image: my-app:latest
+      volumes:
+        - name: mihomo-k8s
+          configMap:
+            name: egress-mihomo-k8s-transparent-client
+        - name: mihomo-data
+          emptyDir: {}
+        - name: mihomo-run
+          emptyDir: {}

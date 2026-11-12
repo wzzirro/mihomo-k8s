@@ -1,0 +1,21 @@
+{{- if .Values.clientEnv.enabled }}
+{{- $proxy := printf "http://%s:%d" (include "mihomo-k8s.gatewayHost" .) (int .Values.gateway.port) }}
+{{- $noProxy := join "," (concat .Values.clientEnv.noProxy .Values.clientEnv.extraNoProxy) }}
+{{- range .Values.clientEnv.namespaces }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mihomo-k8s.clientEnvName" $ }}
+  namespace: {{ . }}
+  labels:
+    {{- include "mihomo-k8s.labels" $ | nindent 4 }}
+data:
+  HTTP_PROXY: {{ $proxy | quote }}
+  HTTPS_PROXY: {{ $proxy | quote }}
+  NO_PROXY: {{ $noProxy | quote }}
+  http_proxy: {{ $proxy | quote }}
+  https_proxy: {{ $proxy | quote }}
+  no_proxy: {{ $noProxy | quote }}
+{{- end }}
+{{- end }}

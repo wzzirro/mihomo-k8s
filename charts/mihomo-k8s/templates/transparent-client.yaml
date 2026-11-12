@@ -1,0 +1,34 @@
+{{- if .Values.transparentClient.enabled }}
+{{- $config := dict
+    "redir-port" (int .Values.transparentClient.port)
+    "allow-lan" false
+    "mode" "rule"
+    "log-level" "warning"
+    "ipv6" false
+    "find-process-mode" "off"
+    "profile" (dict "store-selected" false "store-fake-ip" false)
+    "proxies" (list (dict
+      "name" "gateway"
+      "type" "socks5"
+      "server" (include "mihomo-k8s.gatewayHost" .)
+      "port" (int .Values.gateway.port)))
+    "rules" (list "MATCH,gateway") }}
+{{- range .Values.transparentClient.namespaces }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mihomo-k8s.transparentClientName" $ }}
+  namespace: {{ . }}
+  labels:
+    {{- include "mihomo-k8s.labels" $ | nindent 4 }}
+data:
+  REDIRECT_CIDRS: {{ include "mihomo-k8s.transparentCIDRs" $ | quote }}
+  REDIRECT_PORT: {{ $.Values.transparentClient.port | quote }}
+  PROXY_UID: {{ $.Values.transparentClient.uid | quote }}
+  config.yaml: |
+    {{- toYaml $config | nindent 4 }}
+  redirect.sh: |
+    {{- $.Files.Get "files/redirect.sh" | nindent 4 }}
+{{- end }}
+{{- end }}

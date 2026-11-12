@@ -1,0 +1,55 @@
+# Example: Telegram egress for a cluster, nodes from a subscription.
+#
+# Secrets are created separately, e.g.
+#   kubectl -n egress create secret generic mihomo-subscription \
+#     --from-literal=url='https://subscription.example/your-token'
+#   kubectl -n egress create secret generic mihomo-controller \
+#     --from-literal=secret="$(openssl rand -hex 24)"
+
+providers:
+  main:
+    type: http
+    url: "${SUBSCRIPTION_URL}"
+    interval: 3600
+    # fetch the subscription directly, not through the proxies it describes
+    proxy: DIRECT
+    header:
+      User-Agent: ["clash.meta"]
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+
+env:
+  - name: SUBSCRIPTION_URL
+    valueFrom:
+      secretKeyRef:
+        name: mihomo-subscription
+        key: url
+
+group:
+  type: url-test
+  # drop special-purpose nodes by name
+  excludeFilter: "LTE|Reserve"
+
+allow:
+  telegram: true
+  # anything else you need to reach through the gateway:
+  domainSuffixes: []
+
+controller:
+  existingSecret:
+    name: mihomo-controller
+
+probe:
+  url: https://api.telegram.org
+  webhook:
+    url: "http://alert-receiver.monitoring.svc:8080/mihomo"
+
+# workloads that honour HTTPS_PROXY: `envFrom` the ConfigMap created here
+clientEnv:
+  namespaces: [monitoring]
+
+# workloads that do not: see examples/transparent-client.yaml
+transparentClient:
+  namespaces: [bots]

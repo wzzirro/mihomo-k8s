@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mihomo-k8s.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mihomo-k8s.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- include "mihomo-k8s.config" . | nindent 4 }}
+  render-config.awk: |
+    {{- .Files.Get "files/render-config.awk" | nindent 4 }}
+  probe.sh: |
+    {{- .Files.Get "files/probe.sh" | nindent 4 }}
