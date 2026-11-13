@@ -53,9 +53,12 @@ spec:
           # Native sidecar: starts before the app and stays up for its lifetime.
           restartPolicy: Always
           args: ["-d", "/data", "-f", "/etc/mihomo-k8s/config.yaml"]
+          # The sidecar listens on 127.0.0.1 only, so the probe runs inside it.
+          # It looks for the listener instead of connecting to it: a connection
+          # to the redirect port would be forwarded like any other.
           startupProbe:
-            tcpSocket:
-              port: 7892
+            exec:
+              command: ["/bin/sh", "-c", "netstat -ltn | grep -q ':7892 '"]
             periodSeconds: 1
             failureThreshold: 30
           securityContext:

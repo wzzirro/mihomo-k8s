@@ -84,6 +84,15 @@ extraRules: []
 # general way out of the cluster.
 defaultAction: DIRECT
 
+# -- Destinations the gateway refuses regardless of `defaultAction`, matched
+# after the allow list and after resolving the requested name. Loopback and
+# link-local keep clients away from the gateway's own API and from cloud
+# metadata endpoints.
+blockedCIDRs:
+  - 127.0.0.0/8
+  - 169.254.0.0/16
+  - 0.0.0.0/8
+
 presets:
   telegram:
     domainSuffixes:

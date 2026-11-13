@@ -12,7 +12,7 @@
       "type" "socks5"
       "server" (include "mihomo-k8s.gatewayHost" .)
       "port" (int .Values.gateway.port)))
-    "rules" (list "MATCH,gateway") }}
+    "rules" (list "IP-CIDR,127.0.0.0/8,REJECT,no-resolve" "MATCH,gateway") }}
 {{- range .Values.transparentClient.namespaces }}
 ---
 apiVersion: v1

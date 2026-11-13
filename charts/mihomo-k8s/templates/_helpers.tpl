@@ -137,6 +137,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- range .Values.allow.domains -}}{{- $rules = append $rules (printf "DOMAIN,%s,%s" . $group.name) -}}{{- end -}}
 {{- range .Values.allow.domainSuffixes -}}{{- $rules = append $rules (printf "DOMAIN-SUFFIX,%s,%s" . $group.name) -}}{{- end -}}
 {{- range .Values.allow.ipCIDRs -}}{{- $rules = append $rules (printf "IP-CIDR,%s,%s,no-resolve" . $group.name) -}}{{- end -}}
+{{- /* The gateway must never connect to itself or to link-local addresses
+       (its own API, cloud metadata) on a client's behalf. */ -}}
+{{- range .Values.blockedCIDRs -}}{{- $rules = append $rules (printf "IP-CIDR,%s,REJECT" .) -}}{{- end -}}
 {{- $rules = append $rules (printf "MATCH,%s" .Values.defaultAction) -}}
 {{- $_ := set $cfg "rules" $rules -}}
 
