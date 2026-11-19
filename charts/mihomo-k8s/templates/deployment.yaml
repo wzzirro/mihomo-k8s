@@ -1,6 +1,9 @@
 {{- if and .Values.probe.enabled (not .Values.controller.enabled) }}
 {{- fail "mihomo-k8s: probe.enabled requires controller.enabled" }}
 {{- end }}
+{{- if and .Values.metrics.enabled (not .Values.controller.enabled) }}
+{{- fail "mihomo-k8s: metrics.enabled requires controller.enabled" }}
+{{- end }}
 {{- $fullname := include "mihomo-k8s.fullname" . }}
 apiVersion: apps/v1
 kind: Deployment
@@ -180,6 +183,40 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.dashboard.resources | nindent 12 }}
+        {{- end }}
+        {{- if .Values.metrics.enabled }}
+        # Reads the API on 127.0.0.1 and serves Prometheus metrics on the pod IP.
+        # No readiness probe on purpose: the exporter must never take the
+        # gateway out of the Service.
+        - name: metrics
+          image: {{ include "mihomo-k8s.metricsImage" . }}
+          imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
+          args:
+            - -listen=:{{ .Values.metrics.port }}
+            - -mihomo-url=http://127.0.0.1:{{ .Values.controller.port }}
+            - -timeout={{ .Values.metrics.timeout }}
+          {{- if .Values.controller.existingSecret.name }}
+          env:
+            - name: MIHOMO_CONTROLLER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controller.existingSecret.name }}
+                  key: {{ .Values.controller.existingSecret.key }}
+          {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.metrics.resources | nindent 12 }}
         {{- end }}
       volumes:
         - name: config-template

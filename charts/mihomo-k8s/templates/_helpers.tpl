@@ -31,6 +31,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) }}
 {{- end }}
 
+{{- define "mihomo-k8s.metricsImage" -}}
+{{- printf "%s:%s" .Values.metrics.image.repository (default .Chart.Version .Values.metrics.image.tag) }}
+{{- end }}
+
 {{/* In-cluster DNS name of the gateway Service. */}}
 {{- define "mihomo-k8s.gatewayHost" -}}
 {{- printf "%s.%s.svc.%s" (include "mihomo-k8s.fullname" .) .Release.Namespace .Values.clusterDomain }}

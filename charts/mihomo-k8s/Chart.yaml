@@ -2,7 +2,7 @@ apiVersion: v2
 name: mihomo-k8s
 description: Rule-based egress gateway for Kubernetes workloads, powered by the mihomo (Clash.Meta) core
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "v1.19.34"
 kubeVersion: ">=1.29.0-0"
 home: https://github.com/wzzirro/mihomo-k8s

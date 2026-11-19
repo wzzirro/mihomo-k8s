@@ -39,6 +39,10 @@ the built-in preset.
 - **Reachability probe** — checks the target through the proxy group and POSTs
   to a webhook when it starts failing and when it recovers. The webhook is
   called directly, not through the gateway.
+- **Metrics** — an optional exporter sidecar and a PodMonitor: subscription
+  expiry and traffic, the last subscription update and the health of every
+  node, so that Prometheus can alert before a subscription runs out or when
+  most of its nodes die. See [Metrics](#metrics).
 - **Panel** — [metacubexd](https://github.com/MetaCubeX/metacubexd) as a
   sidecar. The panel and the mihomo API listen on `127.0.0.1` inside the pod:
   reachable with `kubectl port-forward`, invisible to the rest of the cluster.
@@ -109,6 +113,59 @@ replica; pick a specific pod instead of `deploy/...` to see another.
 `status` is `firing` after `probe.failureThreshold` consecutive failures and
 `resolved` on the first success afterwards. Each replica reports on its own.
 
+## Metrics
+
+```yaml
+metrics:
+  enabled: true
+  podMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack   # whatever your Prometheus selects by
+```
+
+The exporter (`exporter/`, image `ghcr.io/wzzirro/mihomo-k8s-exporter`) reads
+the mihomo API on every scrape and keeps no state. Every replica is scraped and
+reports its own view; aggregate with `max`/`sum by (provider)` in rules.
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `mihomo_up` | | The API answered |
+| `mihomo_build_info` | `version` | Core version |
+| `mihomo_provider_proxies` | `provider` | Nodes in the subscription |
+| `mihomo_provider_updated_timestamp_seconds` | `provider` | Last successful download, also when nothing changed |
+| `mihomo_subscription_expire_timestamp_seconds` | `provider` | Expiry from the `subscription-userinfo` header, 0 if none |
+| `mihomo_subscription_{upload,download,total}_bytes` | `provider` | Traffic from the same header; `total` 0 means unlimited |
+| `mihomo_proxy_alive` | `provider`, `proxy`, `url` | Last health check of the node against `url` |
+| `mihomo_proxy_delay_seconds` | `provider`, `proxy`, `url` | Its delay, while alive |
+| `mihomo_group_proxies` | `group`, `provider` | Nodes of the provider in the group (after filters) |
+| `mihomo_group_proxies_alive` | `group`, `provider` | Of them, alive for the group's test URL |
+| `mihomo_group_selected` | `group`, `proxy` | Node the group uses now |
+
+Subscription expiry and traffic exist only if the provider sends the
+`subscription-userinfo` header. The subscription's display name
+(`profile-title`) is not kept by mihomo: `provider` is the key under
+`providers` in values, so name it after the subscription.
+
+Example rules:
+
+```yaml
+# Subscription ends within 7 days.
+- alert: MihomoSubscriptionExpiring
+  expr: (max by (provider) (mihomo_subscription_expire_timestamp_seconds > 0) - time()) / 86400 < 7
+# No node of the subscription in the group passes the check on any replica.
+- alert: MihomoSubscriptionDown
+  expr: max by (group, provider) (mihomo_group_proxies_alive) == 0
+  for: 10m
+# 60% or more of its nodes are down.
+- alert: MihomoSubscriptionDegraded
+  expr: sum by (group, provider) (mihomo_group_proxies_alive) / sum by (group, provider) (mihomo_group_proxies) <= 0.4
+  for: 15m
+# The subscription has not been downloaded for 3 update intervals.
+- alert: MihomoSubscriptionStale
+  expr: time() - max by (provider) (mihomo_provider_updated_timestamp_seconds) > 3 * 3600
+```
+
 ## Good to know
 
 - **Anyone in the cluster can use the gateway** unless you restrict it. Add a
@@ -130,7 +187,13 @@ replica; pick a specific pod instead of `deploy/...` to see another.
 ```sh
 helm lint charts/mihomo-k8s -f charts/mihomo-k8s/ci/test-values.yaml
 helm template egress charts/mihomo-k8s -n egress -f charts/mihomo-k8s/ci/test-values.yaml
+(cd exporter && go vet ./... && go test ./...)
 ```
+
+The exporter image is built by `.github/workflows/exporter.yml`: `:edge` and
+`:sha-<commit>` from `main`, `:X.Y.Z` from a `vX.Y.Z` tag. The chart uses its
+own version as the default image tag, so tag a release after bumping
+`Chart.yaml`.
 
 ## License
 

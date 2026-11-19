@@ -169,6 +169,35 @@ probe:
     limits:
       memory: 32Mi
 
+# Prometheus metrics: a sidecar reads the mihomo API on every scrape and
+# reports subscription expiry and traffic, the last provider update, and the
+# health of every node, per provider and per proxy group. Its port listens on
+# the pod IP and serves read-only metrics. Requires `controller.enabled`.
+metrics:
+  enabled: false
+  image:
+    repository: ghcr.io/wzzirro/mihomo-k8s-exporter
+    # -- Defaults to the chart version.
+    tag: ""
+    pullPolicy: IfNotPresent
+  port: 9101
+  # -- Time limit for reading the API on each scrape; keep it below the
+  # scrape timeout.
+  timeout: 5s
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  # PodMonitor for the Prometheus Operator.
+  podMonitor:
+    enabled: false
+    # -- Extra labels, e.g. the one your Prometheus selects monitors by.
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 15s
+
 # -- Extra environment for the gateway containers; the source of `${VAR}`
 # placeholder values.
 env: []
